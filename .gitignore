@@ -1,0 +1,11 @@
+.env
+.cursor
+__pycache__
+.pytest_cache
+.ruff_cache
+.vscode
+.cursor
+.cursor/
+.cursor/rules/
+.cursor/rules/base-rules.mdc
+.cursor/rules/base-rules.mdc

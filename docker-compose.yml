@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: diabet_bot_postgres
+    environment:
+      POSTGRES_DB: diabet_bot
+      POSTGRES_USER: diabet_user
+      POSTGRES_PASSWORD: diabet_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  bot:
+    build: .
+    container_name: diabet_bot
+    depends_on:
+      - postgres
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=diabet_user
+      - POSTGRES_PASSWORD=diabet_password
+      - POSTGRES_DB=diabet_bot
+      - DEBUG=False
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
