@@ -1,10 +1,30 @@
-from sqlalchemy import Column, Integer, Float, String, DateTime, Date, Enum
+from sqlalchemy import Column, Integer, Float, String, DateTime, Date, Enum, BigInteger, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime, date
 import enum
 
 Base = declarative_base()
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    telegram_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    username = Column(String, nullable=True)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+    # Связи
+    fci_records = relationship("FCI", back_populates="user")
+    meal_records = relationship("MealRecord", back_populates="user")
+    insulin_records = relationship("InsulinRecord", back_populates="user")
+
+    def __repr__(self):
+        return f"<User(telegram_id={self.telegram_id}, username={self.username})>"
 
 
 class MealType(str, enum.Enum):
@@ -14,22 +34,49 @@ class MealType(str, enum.Enum):
     DINNER = "dinner"
 
 
+class InsulinType(str, enum.Enum):
+    FOOD = "food"  # На еду
+    CORRECTION = "correction"  # Коррекция
+
+
 class FCI(Base):
     __tablename__ = "fci"
 
     id = Column(Integer, primary_key=True, index=True)
-    date = Column(Date, unique=True, index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)
     value = Column(Float, nullable=False)
     created_at = Column(DateTime, default=func.now())
 
+    # Связи
+    user = relationship("User", back_populates="fci_records")
+
     def __repr__(self):
-        return f"<FCI(date={self.date}, value={self.value})>"
+        return f"<FCI(user_id={self.user_id}, date={self.date}, value={self.value})>"
+
+
+class InsulinRecord(Base):
+    __tablename__ = "insulin_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    date = Column(Date, nullable=False, index=True)
+    insulin_type = Column(Enum(InsulinType), nullable=False)
+    amount = Column(Float, nullable=False)  # Количество инсулина в единицах
+    created_at = Column(DateTime, default=func.now())
+
+    # Связи
+    user = relationship("User", back_populates="insulin_records")
+
+    def __repr__(self):
+        return f"<InsulinRecord(user_id={self.user_id}, date={self.date}, type={self.insulin_type}, amount={self.amount})>"
 
 
 class MealRecord(Base):
     __tablename__ = "meal_records"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     date = Column(Date, nullable=False, index=True)
     meal_type = Column(Enum(MealType), nullable=False)
 
@@ -52,20 +99,27 @@ class MealRecord(Base):
 
     created_at = Column(DateTime, default=func.now())
 
+    # Связи
+    user = relationship("User", back_populates="meal_records")
+    additional_injections = relationship("AdditionalInjection", back_populates="meal_record")
+
     def __repr__(self):
-        return f"<MealRecord(date={self.date}, meal={self.meal_type}, uk={self.uk_value})>"
+        return f"<MealRecord(user_id={self.user_id}, date={self.date}, meal={self.meal_type}, uk={self.uk_value})>"
 
 
 class AdditionalInjection(Base):
     __tablename__ = "additional_injections"
 
     id = Column(Integer, primary_key=True, index=True)
-    meal_record_id = Column(Integer, nullable=False, index=True)
+    meal_record_id = Column(Integer, ForeignKey("meal_records.id"), nullable=False, index=True)
     time_from_meal = Column(Integer, nullable=False)  # Время от еды в минутах
     dose = Column(Float, nullable=False)  # Исходная доза
     dose_corrected = Column(Float, nullable=False)  # Скорректированная доза
 
     created_at = Column(DateTime, default=func.now())
+
+    # Связи
+    meal_record = relationship("MealRecord", back_populates="additional_injections")
 
     def __repr__(self):
         return f"<AdditionalInjection(meal_id={self.meal_record_id}, time={self.time_from_meal}, dose={self.dose_corrected})>"

@@ -1,7 +1,8 @@
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from config.base import settings
-from app.handlers import start, fci, meal, statistics
+from app.handlers import start, fci, meal, statistics, cancel
+from app.middlewares.user_middleware import UserMiddleware
 from db.models import Base
 from db.session import engine
 import asyncio
@@ -25,10 +26,15 @@ async def main():
     bot = Bot(token=settings.bot_token)
     dp = Dispatcher(storage=MemoryStorage())
 
+    # Добавляем middleware
+    dp.message.middleware(UserMiddleware())
+    dp.callback_query.middleware(UserMiddleware())
+
     # Создаём таблицы
     await create_tables()
 
     # Регистрируем роутеры
+    dp.include_router(cancel.router)  # Общий обработчик отмены должен быть первым
     dp.include_router(start.router)
     dp.include_router(fci.router)
     dp.include_router(meal.router)

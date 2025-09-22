@@ -86,3 +86,11 @@ def get_statistics_keyboard() -> InlineKeyboardMarkup:
         ]
     )
     return keyboard
+
+
+def get_cancel_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для отмены ввода"""
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="❌ Отменить ввод", callback_data="cancel_input")]]
+    )
+    return keyboard

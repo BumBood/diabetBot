@@ -50,7 +50,7 @@ def calculate_uk(
     numerator = (glucose_end - glucose_start) / fci + insulin_food + insulin_additional
     denominator = carbs_main + carbs_additional
 
-    return numerator / denominator
+    return (numerator / denominator) * 10
 
 
 def get_meal_type_name(meal_type: MealType) -> str:

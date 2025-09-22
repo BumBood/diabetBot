@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from datetime import date, timedelta
 from app.keyboards import get_statistics_keyboard, get_main_menu_keyboard
 from app.utils import format_date, get_meal_type_name
-from db.repository import FCIRepository, MealRecordRepository
+from db.repository import FCIRepository, MealRecordRepository, UserRepository
 from db.session import async_session
 from db.models import MealType
 
@@ -24,46 +24,46 @@ async def show_statistics_menu(message: Message):
 
 
 @router.callback_query(F.data == "stats_today")
-async def show_today_stats(callback: CallbackQuery):
+async def show_today_stats(callback: CallbackQuery, user):
     """Показать статистику за сегодня"""
     today = date.today()
-    await show_stats_for_date(callback, today)
+    await show_stats_for_date(callback, today, user.id)
 
 
 @router.callback_query(F.data == "stats_yesterday")
-async def show_yesterday_stats(callback: CallbackQuery):
+async def show_yesterday_stats(callback: CallbackQuery, user):
     """Показать статистику за вчера"""
     yesterday = date.today() - timedelta(days=1)
-    await show_stats_for_date(callback, yesterday)
+    await show_stats_for_date(callback, yesterday, user.id)
 
 
 @router.callback_query(F.data == "stats_week")
-async def show_week_stats(callback: CallbackQuery):
+async def show_week_stats(callback: CallbackQuery, user):
     """Показать статистику за неделю"""
     end_date = date.today()
     start_date = end_date - timedelta(days=6)
-    await show_stats_for_period(callback, start_date, end_date)
+    await show_stats_for_period(callback, start_date, end_date, user.id)
 
 
 @router.callback_query(F.data == "stats_month")
-async def show_month_stats(callback: CallbackQuery):
+async def show_month_stats(callback: CallbackQuery, user):
     """Показать статистику за месяц"""
     end_date = date.today()
     start_date = end_date - timedelta(days=29)
-    await show_stats_for_period(callback, start_date, end_date)
+    await show_stats_for_period(callback, start_date, end_date, user.id)
 
 
-async def show_stats_for_date(callback: CallbackQuery, target_date: date):
+async def show_stats_for_date(callback: CallbackQuery, target_date: date, user_id: int):
     """Показать статистику за конкретную дату"""
     async with async_session() as session:
         fci_repo = FCIRepository(session)
         meal_repo = MealRecordRepository(session)
 
         # Получаем ФЧИ за эту дату
-        fci_record = await fci_repo.get_by_date(target_date)
+        fci_record = await fci_repo.get_by_date(user_id, target_date)
 
         # Получаем записи о приёмах пищи за эту дату
-        meal_records = await meal_repo.get_by_date(target_date)
+        meal_records = await meal_repo.get_by_date(user_id, target_date)
 
         # Группируем по типам приёмов пищи
         meals_by_type = {}
@@ -94,17 +94,17 @@ async def show_stats_for_date(callback: CallbackQuery, target_date: date):
         await callback.answer()
 
 
-async def show_stats_for_period(callback: CallbackQuery, start_date: date, end_date: date):
+async def show_stats_for_period(callback: CallbackQuery, start_date: date, end_date: date, user_id: int):
     """Показать статистику за период"""
     async with async_session() as session:
         fci_repo = FCIRepository(session)
         meal_repo = MealRecordRepository(session)
 
         # Получаем ФЧИ за период
-        fci_records = await fci_repo.get_by_date_range(start_date, end_date)
+        fci_records = await fci_repo.get_by_date_range(user_id, start_date, end_date)
 
         # Получаем записи о приёмах пищи за период
-        meal_records = await meal_repo.get_by_date_range(start_date, end_date)
+        meal_records = await meal_repo.get_by_date_range(user_id, start_date, end_date)
 
         text = f"📊 <b>Статистика за период {format_date(start_date)} - {format_date(end_date)}</b>\n\n"
 
