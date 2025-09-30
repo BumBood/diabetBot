@@ -2,6 +2,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from config.base import settings
 from app.handlers import start, fci, meal, statistics, cancel
+from app.handlers import calories
 from app.middlewares.user_middleware import UserMiddleware
 from db.models import Base
 from db.session import engine
@@ -39,6 +40,7 @@ async def main():
     dp.include_router(fci.router)
     dp.include_router(meal.router)
     dp.include_router(statistics.router)
+    dp.include_router(calories.router)
 
     logger.info("Бот запущен")
 

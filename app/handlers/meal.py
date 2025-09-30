@@ -10,6 +10,7 @@ from app.keyboards import (
     get_time_from_meal_keyboard,
     get_main_menu_keyboard,
     get_cancel_keyboard,
+    get_skip_proteins_keyboard,
 )
 from app.utils import (
     parse_glucose_input,
@@ -18,11 +19,35 @@ from app.utils import (
     calculate_injection_correction,
     get_meal_type_name,
 )
-from db.repository import MealRecordRepository, AdditionalInjectionRepository, FCIRepository, UserRepository
+from db.repository import MealRecordRepository, AdditionalInjectionRepository, FCIRepository
 from db.session import async_session
 from db.models import MealType
 
 router = Router()
+
+
+async def _safe_edit_or_answer(callback: CallbackQuery, text: str, parse_mode: str | None = None, reply_markup=None):
+    msg = callback.message
+    if msg is not None and hasattr(msg, "edit_text"):
+        try:
+            await msg.edit_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            await callback.answer()
+            return
+        except Exception:
+            pass
+    if msg is not None and hasattr(msg, "answer"):
+        try:
+            await msg.answer(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            await callback.answer()
+            return
+        except Exception:
+            pass
+    bot = callback.bot
+    if bot is not None:
+        await bot.send_message(
+            chat_id=callback.from_user.id, text=text, parse_mode=parse_mode, reply_markup=reply_markup
+        )
+    await callback.answer()
 
 
 @router.message(F.text == "🍽️ Рассчитать УК")
@@ -41,6 +66,9 @@ async def start_uk_calculation(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("meal_"))
 async def process_meal_type_selection(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора типа приёма пищи"""
+    if not callback.data:
+        await callback.answer()
+        return
     meal_type_str = callback.data.split("_")[1]
     meal_type = MealType(meal_type_str)
 
@@ -53,15 +81,14 @@ async def process_meal_type_selection(callback: CallbackQuery, state: FSMContext
 📊 <b>Шаг 1:</b> Введите уровень сахара (СК_старт) в ммоль/л на момент ввода инсулина:
     """
 
-    await callback.message.edit_text(text, parse_mode="HTML")
-    await callback.answer()
+    await _safe_edit_or_answer(callback, text, parse_mode="HTML")
 
 
 @router.message(MealStates.waiting_for_glucose_start)
 async def process_glucose_start(message: Message, state: FSMContext, user):
     """Обработка ввода СК_старт"""
     try:
-        glucose_start = parse_glucose_input(message.text)
+        glucose_start = parse_glucose_input(message.text or "")
         if glucose_start < 1 or glucose_start > 30:
             await message.answer(
                 "❌ Уровень глюкозы должен быть от 1 до 30 ммоль/л. Попробуйте ещё раз:",
@@ -90,7 +117,7 @@ async def process_glucose_start(message: Message, state: FSMContext, user):
 async def process_pause_time(message: Message, state: FSMContext, user):
     """Обработка ввода времени паузы"""
     try:
-        pause_time = int(parse_number_input(message.text))
+        pause_time = int(parse_number_input(message.text or ""))
         if pause_time < 0:
             await message.answer(
                 "❌ Время паузы не может быть отрицательным. Попробуйте ещё раз:", reply_markup=get_cancel_keyboard()
@@ -116,7 +143,7 @@ async def process_pause_time(message: Message, state: FSMContext, user):
 async def process_carbs_main(message: Message, state: FSMContext, user):
     """Обработка ввода основных углеводов"""
     try:
-        carbs_main = parse_number_input(message.text)
+        carbs_main = parse_number_input(message.text or "")
         if carbs_main < 0:
             await message.answer(
                 "❌ Количество углеводов не может быть отрицательным. Попробуйте ещё раз:",
@@ -151,8 +178,7 @@ async def add_additional_carbs(callback: CallbackQuery, state: FSMContext):
 🍭 Введите количество дополнительных углеводов в граммах:
     """
 
-    await callback.message.edit_text(text)
-    await callback.answer()
+    await _safe_edit_or_answer(callback, text)
 
 
 @router.callback_query(F.data == "skip_carbs")
@@ -167,15 +193,14 @@ async def skip_additional_carbs(callback: CallbackQuery, state: FSMContext):
 🥩 <b>Шаг 5:</b> Введите количество белков в граммах (или 0, если не считаете):
     """
 
-    await callback.message.edit_text(text, parse_mode="HTML")
-    await callback.answer()
+    await _safe_edit_or_answer(callback, text, parse_mode="HTML")
 
 
 @router.message(MealStates.waiting_for_carbs_additional)
 async def process_carbs_additional(message: Message, state: FSMContext, user):
     """Обработка ввода дополнительных углеводов"""
     try:
-        carbs_additional = parse_number_input(message.text)
+        carbs_additional = parse_number_input(message.text or "")
         if carbs_additional < 0:
             await message.answer(
                 "❌ Количество углеводов не может быть отрицательным. Попробуйте ещё раз:",
@@ -189,10 +214,11 @@ async def process_carbs_additional(message: Message, state: FSMContext, user):
         text = f"""
 ✅ Дополнительные углеводы: {carbs_additional}г
 
-🥩 <b>Шаг 5:</b> Введите количество белков в граммах (или 0, если не считаете):
+🥩 <b>Шаг 5:</b> Введите количество белков в граммах
+или нажмите «Пропустить белки»:
         """
 
-        await message.answer(text, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
+        await message.answer(text, reply_markup=get_skip_proteins_keyboard(), parse_mode="HTML")
 
     except ValueError:
         await message.answer(
@@ -201,11 +227,33 @@ async def process_carbs_additional(message: Message, state: FSMContext, user):
         )
 
 
+@router.callback_query(F.data == "skip_proteins")
+async def skip_proteins(callback: CallbackQuery, state: FSMContext):
+    """Пользователь выбирает пропустить белки"""
+    await state.update_data(proteins=0.0)
+    await state.set_state(MealStates.waiting_for_fats)
+
+    text = """
+🥑 <b>Шаг 6:</b> Введите количество жиров в граммах (или 0, если не считаете):
+    """
+
+    await _safe_edit_or_answer(callback, text, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "enter_proteins")
+async def enter_proteins(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(MealStates.waiting_for_proteins)
+    text = """
+🥩 Введите количество белков в граммах:
+    """
+    await _safe_edit_or_answer(callback, text)
+
+
 @router.message(MealStates.waiting_for_proteins)
 async def process_proteins(message: Message, state: FSMContext, user):
     """Обработка ввода белков"""
     try:
-        proteins = parse_number_input(message.text)
+        proteins = parse_number_input(message.text or "")
         if proteins < 0:
             await message.answer(
                 "❌ Количество белков не может быть отрицательным. Попробуйте ещё раз:",
@@ -214,12 +262,12 @@ async def process_proteins(message: Message, state: FSMContext, user):
             return
 
         await state.update_data(proteins=proteins)
-        await state.set_state(MealStates.waiting_for_insulin_food)
+        await state.set_state(MealStates.waiting_for_fats)
 
         text = f"""
 ✅ Белки: {proteins}г
 
-💉 <b>Шаг 6:</b> Введите количество инсулина на еду в единицах:
+🥑 <b>Шаг 6:</b> Введите количество жиров в граммах (или 0, если не считаете):
         """
 
         await message.answer(text, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
@@ -230,11 +278,40 @@ async def process_proteins(message: Message, state: FSMContext, user):
         )
 
 
+@router.message(MealStates.waiting_for_fats)
+async def process_fats(message: Message, state: FSMContext, user):
+    """Обработка ввода жиров"""
+    try:
+        fats = parse_number_input(message.text or "")
+        if fats < 0:
+            await message.answer(
+                "❌ Количество жиров не может быть отрицательным. Попробуйте ещё раз:",
+                reply_markup=get_cancel_keyboard(),
+            )
+            return
+
+        await state.update_data(fats=fats)
+        await state.set_state(MealStates.waiting_for_insulin_food)
+
+        text = f"""
+✅ Жиры: {fats}г
+
+💉 <b>Шаг 7:</b> Введите количество инсулина на еду в единицах:
+        """
+
+        await message.answer(text, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
+
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат числа. Введите количество жиров (например: 10):", reply_markup=get_cancel_keyboard()
+        )
+
+
 @router.message(MealStates.waiting_for_insulin_food)
 async def process_insulin_food(message: Message, state: FSMContext, user):
     """Обработка ввода инсулина на еду"""
     try:
-        insulin_food = parse_number_input(message.text)
+        insulin_food = parse_number_input(message.text or "")
         if insulin_food < 0:
             await message.answer(
                 "❌ Количество инсулина не может быть отрицательным. Попробуйте ещё раз:",
@@ -248,7 +325,7 @@ async def process_insulin_food(message: Message, state: FSMContext, user):
         text = f"""
 ✅ Инсулин на еду: {insulin_food} ед.
 
-💉 <b>Шаг 7:</b> Были ли дополнительные подколки (коррекции) после еды?
+💉 <b>Шаг 8:</b> Были ли дополнительные подколки (коррекции) после еды?
         """
 
         await message.answer(text, reply_markup=get_additional_injection_keyboard(), parse_mode="HTML")
@@ -270,13 +347,15 @@ async def add_additional_injection(callback: CallbackQuery, state: FSMContext):
 💉 Выберите время подколки относительно еды:
     """
 
-    await callback.message.edit_text(text, reply_markup=get_time_from_meal_keyboard())
-    await callback.answer()
+    await _safe_edit_or_answer(callback, text, reply_markup=get_time_from_meal_keyboard())
 
 
 @router.callback_query(F.data.startswith("time_"))
 async def process_injection_time(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора времени подколки"""
+    if not callback.data:
+        await callback.answer()
+        return
     time_minutes = int(callback.data.split("_")[1])
 
     await state.update_data(current_injection_time=time_minutes)
@@ -288,15 +367,14 @@ async def process_injection_time(callback: CallbackQuery, state: FSMContext):
 💉 Введите дозу подколки в единицах:
     """
 
-    await callback.message.edit_text(text)
-    await callback.answer()
+    await _safe_edit_or_answer(callback, text)
 
 
 @router.message(MealStates.waiting_for_additional_injections)
 async def process_injection_dose(message: Message, state: FSMContext, user):
     """Обработка ввода дозы подколки"""
     try:
-        dose = parse_number_input(message.text)
+        dose = parse_number_input(message.text or "")
         if dose <= 0:
             await message.answer(
                 "❌ Доза должна быть больше 0. Попробуйте ещё раз:", reply_markup=get_cancel_keyboard()
@@ -345,18 +423,17 @@ async def finish_injections(callback: CallbackQuery, state: FSMContext):
     text = f"""
 ✅ Подколки завершены. Всего дополнительного инсулина: {total_additional_insulin:.2f} ед.
 
-📊 <b>Шаг 8:</b> Введите уровень сахара (СК_отработка) через 4-5 часов после еды в ммоль/л:
+📊 <b>Шаг 9:</b> Введите уровень сахара (СК_отработка) через 4-5 часов после еды в ммоль/л:
     """
 
-    await callback.message.edit_text(text, parse_mode="HTML")
-    await callback.answer()
+    await _safe_edit_or_answer(callback, text, parse_mode="HTML")
 
 
 @router.message(MealStates.waiting_for_glucose_end)
 async def process_glucose_end(message: Message, state: FSMContext, user):
     """Обработка ввода СК_отработка и финальный расчёт УК"""
     try:
-        glucose_end = parse_glucose_input(message.text)
+        glucose_end = parse_glucose_input(message.text or "")
         if glucose_end < 1 or glucose_end > 30:
             await message.answer(
                 "❌ Уровень глюкозы должен быть от 1 до 30 ммоль/л. Попробуйте ещё раз:",
@@ -379,7 +456,7 @@ async def process_glucose_end(message: Message, state: FSMContext, user):
                 await state.clear()
                 return
 
-            fci_value = latest_fci.value
+            fci_value = float(latest_fci.value)
 
             # Рассчитываем УК
             uk_value = calculate_uk(
@@ -390,6 +467,8 @@ async def process_glucose_end(message: Message, state: FSMContext, user):
                 insulin_additional=data.get("insulin_additional", 0),
                 carbs_main=data["carbs_main"],
                 carbs_additional=data.get("carbs_additional", 0),
+                proteins=data.get("proteins"),
+                fats=data.get("fats"),
             )
 
             # Сохраняем запись о приёме пищи
@@ -414,24 +493,45 @@ async def process_glucose_end(message: Message, state: FSMContext, user):
                 injection_repo = AdditionalInjectionRepository(session)
                 for inj in data["additional_injections"]:
                     await injection_repo.create(
-                        meal_record_id=meal_record.id,
+                        meal_record_id=int(meal_record.id),
                         time_from_meal=inj["time"],
                         dose=inj["dose"],
                         dose_corrected=inj["corrected_dose"],
                     )
+
+        # Формируем дополнительные блоки отчёта
+        pause_time = data.get("pause_time")
+        pause_line = f"\n• Пауза перед едой: {pause_time} мин." if pause_time is not None else ""
+
+        injections = data.get("additional_injections") or []
+        if injections:
+            injections_lines = ["\n💉 <b>Подколки:</b>"]
+            for idx, inj in enumerate(injections, start=1):
+                tmin = int(inj.get("time", 0))
+                dose = float(inj.get("dose", 0))
+                dose_corr = float(inj.get("corrected_dose", 0))
+                injections_lines.append(
+                    f"• #{idx}: через {tmin // 60} ч (≈ {tmin} мин) — {dose} ед. → {dose_corr:.2f} ед."
+                )
+            injections_block = "\n".join(injections_lines)
+        else:
+            injections_block = ""
 
         # Формируем результат
         result_text = f"""
 🎉 <b>Расчёт УК завершён!</b>
 
 📊 <b>Данные:</b>
-• Приём пищи: {get_meal_type_name(data["meal_type"])}
+• Приём пищи: {get_meal_type_name(data["meal_type"])}{pause_line}
 • СК_старт: {data["glucose_start"]} ммоль/л
 • СК_отработка: {glucose_end} ммоль/л
 • Углеводы: {data["carbs_main"]}г + {data.get("carbs_additional", 0)}г = {data["carbs_main"] + data.get("carbs_additional", 0)}г
+• Белки: {data.get("proteins", 0)}г
+• Жиры: {data.get("fats", 0)}г
 • Инсулин на еду: {data["insulin_food"]} ед.
 • Дополнительный инсулин: {data.get("insulin_additional", 0):.2f} ед.
 • ФЧИ: {fci_value:.2f}
+{injections_block}
 
 📈 <b>Результат:</b>
 • <b>УК = {uk_value:.3f}</b>

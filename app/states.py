@@ -14,6 +14,7 @@ class MealStates(StatesGroup):
     waiting_for_carbs_main = State()
     waiting_for_carbs_additional = State()
     waiting_for_proteins = State()
+    waiting_for_fats = State()
     waiting_for_insulin_food = State()
     waiting_for_glucose_end = State()
     waiting_for_additional_injections = State()
@@ -22,3 +23,12 @@ class MealStates(StatesGroup):
 
 class StatisticsStates(StatesGroup):
     waiting_for_date_range = State()
+
+
+class CaloriesStates(StatesGroup):
+    waiting_for_gender = State()
+    waiting_for_age_years = State()
+    waiting_for_weight_kg = State()
+    waiting_for_height_cm = State()
+    waiting_for_activity = State()
+    waiting_for_metabolic_range = State()

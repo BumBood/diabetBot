@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Tuple
 from db.models import MealType
 
@@ -42,15 +42,34 @@ def calculate_uk(
     insulin_additional: float,
     carbs_main: float,
     carbs_additional: float,
+    proteins: float | None = None,
+    fats: float | None = None,
 ) -> float:
-    """Рассчитывает УК по формуле"""
-    if carbs_main + carbs_additional == 0:
+    """Рассчитывает УК по формуле с учётом БЖУ.
+
+    Спекулятивно: учитываем энергетический вклад белков и жиров в пересчёте на условные "углеводные граммы".
+    Простой приближенный перевод (можно скорректировать под твою методику):
+      - белки: 4 ккал/г → эквивалент углеводов по влиянию: 0.1 г углеводов на 1 г белка (фактор 0.1)
+      - жиры: 9 ккал/г → медленное влияние: 0.05 г углеводов на 1 г жира (фактор 0.05)
+    Если нужны другие коэффициенты — скажи, вынесу их в настройки.
+    """
+    if carbs_main + carbs_additional == 0 and not proteins and not fats:
+        return 0.0
+
+    proteins = proteins or 0.0
+    fats = fats or 0.0
+
+    # Условная карб-эквивалентность Б/Ж
+    protein_carb_eq = 0.1 * proteins
+    fat_carb_eq = 0.05 * fats
+
+    effective_carbs = carbs_main + carbs_additional + protein_carb_eq + fat_carb_eq
+    if effective_carbs <= 0:
         return 0.0
 
     numerator = (glucose_end - glucose_start) / fci + insulin_food + insulin_additional
-    denominator = carbs_main + carbs_additional
-
-    return (numerator / denominator) * 10
+    uk = (numerator / effective_carbs) * 10
+    return uk
 
 
 def get_meal_type_name(meal_type: MealType) -> str:
