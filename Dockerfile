@@ -11,4 +11,4 @@ RUN pip install -r requirements.txt
 COPY . .
 
 # Команда по умолчанию
-CMD ["sh", "-c", "alembic upgrade head && python main.py"]
+CMD ["python", "main.py"]
