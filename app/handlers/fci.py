@@ -49,13 +49,13 @@ async def start_fci_calculation(message: Message, state: FSMContext, user):
 
 Мне нужно собрать данные о количестве ультракороткого инсулина на еду и коррекции (сколы) с 8:00 до 24:00 за три дня:
 
-• <b>Позавчера</b> ({format_date(day1)})
-• <b>Вчера</b> ({format_date(day2)})
-• <b>Сегодня</b> ({format_date(day3)})
+• <b>Вчера</b> ({format_date(day1)})
+• <b>Позавчера</b> ({format_date(day2)})
+• <b>Позапозавчера</b> ({format_date(day3)})
 
 ⚠️ <b>Важно:</b> В расчёт НЕ включается базальный (фоновой) инсулин!
 
-Начнём с позавчерашнего дня. Введите общее количество ультракороткого инсулина за {format_date(day1)}:
+Начнём с вчерашнего дня. Введите общее количество ультракороткого инсулина за {format_date(day1)}:
             """
 
             await state.set_state(FCIStates.waiting_for_day1)

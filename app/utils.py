@@ -4,11 +4,12 @@ from db.models import MealType
 
 
 def get_date_suggestions() -> Tuple[date, date, date]:
-    """Возвращает даты для ввода ФЧИ (позавчера, вчера, сегодня)"""
+    """Возвращает даты для ввода ФЧИ (вчера, позавчера, позапозавчера)"""
     today = date.today()
     yesterday = today - timedelta(days=1)
     day_before_yesterday = today - timedelta(days=2)
-    return day_before_yesterday, yesterday, today
+    day_before_before_yesterday = today - timedelta(days=3)
+    return yesterday, day_before_yesterday, day_before_before_yesterday
 
 
 def format_date(date_obj: date) -> str:
