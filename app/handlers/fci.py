@@ -22,28 +22,37 @@ async def start_fci_calculation(message: Message, state: FSMContext, user):
         # Получаем данные за предыдущие дни из БД
         day1_total = await insulin_repo.get_total_by_date(user.id, day1)
         day2_total = await insulin_repo.get_total_by_date(user.id, day2)
+        day3_total = await insulin_repo.get_total_by_date(user.id, day3)
 
-        # Если есть данные за оба предыдущих дня, сразу переходим к третьему дню
-        if day1_total > 0 and day2_total > 0:
-            text = f"""
-📊 <b>Расчёт ФЧИ (формула чувствительности к инсулину)</b>
+        # Если есть данные за все три дня, сразу переходим к расчёту
+        if day1_total > 0 and day2_total > 0 and day3_total > 0:
+            fci_value = calculate_fci(day1_total, day2_total, day3_total)
 
-Найдены данные за предыдущие дни:
-• <b>{format_date(day1)}</b>: {day1_total:.1f} ед.
-• <b>{format_date(day2)}</b>: {day2_total:.1f} ед.
+            async with async_session() as session:
+                fci_repo = FCIRepository(session)
+                await fci_repo.create(user_id=user.id, date=day3, value=fci_value)
 
-Введите количество ультракороткого инсулина за <b>{format_date(day3)}</b>:
+            result_text = f"""
+🎉 <b>Расчёт ФЧИ завершён!</b>
+
+📊 <b>Данные:</b>
+• {format_date(day1)}: {day1_total} ед.
+• {format_date(day2)}: {day2_total} ед.  
+• {format_date(day3)}: {day3_total} ед.
+
+📈 <b>Результат:</b>
+• Среднее значение: {(day1_total + day2_total + day3_total) / 3:.2f} ед.
+• <b>ФЧИ = {fci_value:.2f}</b>
+
+✅ Данные сохранены! Теперь вы можете использовать этот ФЧИ для расчёта УК.
             """
 
-            await state.set_state(FCIStates.waiting_for_day3)
-            await state.update_data(
-                day1_date=day1, day2_date=day2, day3_date=day3, day1_value=day1_total, day2_value=day2_total
-            )
-            await message.answer(text, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
+            await state.clear()
+            await message.answer(result_text, parse_mode="HTML", reply_markup=get_main_menu_keyboard())
             return
 
-        # Если нет данных за первый день, начинаем с него
-        elif day1_total == 0:
+        # Если нет данных за вчера (day1), начинаем с него
+        if day1_total == 0:
             text = f"""
 📊 <b>Расчёт ФЧИ (формула чувствительности к инсулину)</b>
 
@@ -62,8 +71,8 @@ async def start_fci_calculation(message: Message, state: FSMContext, user):
             await state.update_data(day1_date=day1, day2_date=day2, day3_date=day3)
             await message.answer(text, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
 
-        # Если есть данные только за первый день, начинаем со второго
-        else:
+        # Если есть данные за вчера, но нет за позавчера, спрашиваем позавчера
+        elif day2_total == 0:
             text = f"""
 📊 <b>Расчёт ФЧИ (формула чувствительности к инсулину)</b>
 
@@ -75,6 +84,24 @@ async def start_fci_calculation(message: Message, state: FSMContext, user):
 
             await state.set_state(FCIStates.waiting_for_day2)
             await state.update_data(day1_date=day1, day2_date=day2, day3_date=day3, day1_value=day1_total)
+            await message.answer(text, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
+
+        # Если есть данные за вчера и позавчера, но нет за позапозавчера, спрашиваем позапозавчера
+        elif day3_total == 0:
+            text = f"""
+📊 <b>Расчёт ФЧИ (формула чувствительности к инсулину)</b>
+
+Найдены данные за предыдущие дни:
+• <b>{format_date(day1)}</b>: {day1_total:.1f} ед.
+• <b>{format_date(day2)}</b>: {day2_total:.1f} ед.
+
+Введите количество ультракороткого инсулина за <b>{format_date(day3)}</b>:
+            """
+
+            await state.set_state(FCIStates.waiting_for_day3)
+            await state.update_data(
+                day1_date=day1, day2_date=day2, day3_date=day3, day1_value=day1_total, day2_value=day2_total
+            )
             await message.answer(text, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
 
 
