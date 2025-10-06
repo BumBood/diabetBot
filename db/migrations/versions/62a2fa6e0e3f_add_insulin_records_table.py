@@ -10,6 +10,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -36,7 +37,9 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("date", sa.Date(), nullable=False),
         sa.Column(
-            "insulin_type", sa.Enum("FOOD", "CORRECTION", name="insulintype", create_type=False), nullable=False
+            "insulin_type",
+            postgresql.ENUM("FOOD", "CORRECTION", name="insulintype", create_type=False),
+            nullable=False,
         ),
         sa.Column("amount", sa.Float(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=True),
@@ -58,4 +61,7 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_insulin_records_id"), table_name="insulin_records")
     op.drop_index(op.f("ix_insulin_records_date"), table_name="insulin_records")
     op.drop_table("insulin_records")
+
+    # Удаляем ENUM тип
+    op.execute("DROP TYPE IF EXISTS insulintype")
     # ### end Alembic commands ###
