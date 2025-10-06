@@ -5,6 +5,10 @@ class FCIStates(StatesGroup):
     waiting_for_day1 = State()
     waiting_for_day2 = State()
     waiting_for_day3 = State()
+    waiting_for_correction_date = State()
+    waiting_for_correction_amount = State()
+    waiting_for_edit_date = State()
+    waiting_for_edit_value = State()
 
 
 class MealStates(StatesGroup):

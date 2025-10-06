@@ -99,3 +99,53 @@ def parse_number_input(text: str) -> float:
         return float(cleaned)
     except (ValueError, TypeError):
         raise ValueError("Неверный формат числа")
+
+
+async def calculate_daily_insulin_from_meals(user_id: int, target_date: date, session) -> float:
+    """Рассчитывает общий инсулин за день из записей о приёмах пищи"""
+    from db.repository import MealRecordRepository
+
+    meal_repo = MealRecordRepository(session)
+    meals = await meal_repo.get_by_date(user_id, target_date)
+
+    total_insulin = 0.0
+    for meal in meals:
+        # Инсулин на еду + дополнительный инсулин (подколки)
+        total_insulin += float(meal.insulin_food) + float(meal.insulin_additional)
+
+    return total_insulin
+
+
+async def get_insulin_for_fci(user_id: int, target_date: date, session) -> float:
+    """
+    Получает ВЕСЬ инсулин за день для расчета ФЧИ.
+
+    Приоритет:
+    1. Ручной ввод (is_manual=1) - если пользователь вручную ввел инсулин для этого дня
+    2. Автоматические записи (is_manual=0) - суммирование всех записей из приемов пищи
+    3. Суммирование из meal_records - если нет записей в insulin_records
+    """
+    from db.repository import MealRecordRepository, InsulinRecordRepository
+
+    insulin_repo = InsulinRecordRepository(session)
+
+    # Приоритет 1: Ручной ввод (пользователь вручную ввел данные для ФЧИ)
+    manual_total = await insulin_repo.get_manual_total_by_date(user_id, target_date)
+    if manual_total > 0:
+        return manual_total
+
+    # Приоритет 2: Автоматические записи (суммируются все записи из приемов пищи)
+    auto_total = await insulin_repo.get_auto_total_by_date(user_id, target_date)
+    if auto_total > 0:
+        return auto_total
+
+    # Приоритет 3: Суммирование напрямую из meal_records (если нет записей в insulin_records)
+    meal_repo = MealRecordRepository(session)
+    meals = await meal_repo.get_by_date(user_id, target_date)
+
+    meal_insulin = 0.0
+    if meals:
+        for meal in meals:
+            meal_insulin += float(meal.insulin_food) + float(meal.insulin_additional)
+
+    return meal_insulin

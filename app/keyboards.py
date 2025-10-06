@@ -138,3 +138,24 @@ def get_calories_activity_keyboard(gender: str) -> InlineKeyboardMarkup:
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
     return keyboard
+
+
+def get_fci_correction_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для исправления данных ФЧИ"""
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Исправить данные за день", callback_data="fci_correct_day")],
+            [InlineKeyboardButton(text="✅ Продолжить расчёт", callback_data="fci_continue")],
+        ]
+    )
+    return keyboard
+
+
+def get_fci_edit_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для изменения рассчитанного ФЧИ"""
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Изменить ФЧИ", callback_data="fci_edit_value")],
+        ]
+    )
+    return keyboard

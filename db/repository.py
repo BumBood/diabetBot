@@ -40,14 +40,33 @@ class FCIRepository:
         self.session = session
 
     async def create(self, user_id: int, date: date, value: float) -> FCI:
+        """Создать запись ФЧИ"""
         fci = FCI(user_id=user_id, date=date, value=value)
         self.session.add(fci)
         await self.session.commit()
         await self.session.refresh(fci)
         return fci
 
+    async def update_or_create(self, user_id: int, date: date, value: float) -> FCI:
+        """Обновить существующую запись ФЧИ или создать новую"""
+        # Проверяем, есть ли уже запись за эту дату
+        existing = await self.get_by_date(user_id, date)
+
+        if existing:
+            # Обновляем существующую запись
+            existing.value = value
+            await self.session.commit()
+            await self.session.refresh(existing)
+            return existing
+        else:
+            # Создаем новую запись
+            return await self.create(user_id, date, value)
+
     async def get_by_date(self, user_id: int, date: date) -> Optional[FCI]:
-        result = await self.session.execute(select(FCI).where(and_(FCI.user_id == user_id, FCI.date == date)))
+        """Получить последнюю запись ФЧИ для конкретной даты"""
+        result = await self.session.execute(
+            select(FCI).where(and_(FCI.user_id == user_id, FCI.date == date)).order_by(desc(FCI.created_at)).limit(1)
+        )
         return result.scalar_one_or_none()
 
     async def get_latest(self, user_id: int) -> Optional[FCI]:
@@ -136,9 +155,35 @@ class InsulinRecordRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, user_id: int, date: date, insulin_type: InsulinType, amount: float) -> InsulinRecord:
+    async def create(
+        self, user_id: int, date: date, insulin_type: InsulinType, amount: float, is_manual: bool = False
+    ) -> InsulinRecord:
         """Создать запись об инсулине"""
-        record = InsulinRecord(user_id=user_id, date=date, insulin_type=insulin_type, amount=amount)
+        record = InsulinRecord(
+            user_id=user_id, date=date, insulin_type=insulin_type, amount=amount, is_manual=1 if is_manual else 0
+        )
+        self.session.add(record)
+        await self.session.commit()
+        await self.session.refresh(record)
+        return record
+
+    async def update_or_create_manual(
+        self, user_id: int, target_date: date, insulin_type: InsulinType, amount: float
+    ) -> InsulinRecord:
+        """Обновить или создать ручную запись инсулина за день (заменяет предыдущую ручную запись)"""
+        # Удаляем старые ручные записи за этот день
+        from sqlalchemy import delete
+
+        await self.session.execute(
+            delete(InsulinRecord).where(
+                and_(InsulinRecord.user_id == user_id, InsulinRecord.date == target_date, InsulinRecord.is_manual == 1)
+            )
+        )
+
+        # Создаем новую ручную запись
+        record = InsulinRecord(
+            user_id=user_id, date=target_date, insulin_type=insulin_type, amount=amount, is_manual=1
+        )
         self.session.add(record)
         await self.session.commit()
         await self.session.refresh(record)
@@ -157,6 +202,26 @@ class InsulinRecordRepository:
         """Получить общее количество ультракороткого инсулина за дату (на еду + коррекции)"""
         result = await self.session.execute(
             select(InsulinRecord.amount).where(and_(InsulinRecord.user_id == user_id, InsulinRecord.date == date))
+        )
+        amounts = result.scalars().all()
+        return sum(amounts) if amounts else 0.0
+
+    async def get_manual_total_by_date(self, user_id: int, date: date) -> float:
+        """Получить общее количество ручного инсулина за дату"""
+        result = await self.session.execute(
+            select(InsulinRecord.amount).where(
+                and_(InsulinRecord.user_id == user_id, InsulinRecord.date == date, InsulinRecord.is_manual == 1)
+            )
+        )
+        amounts = result.scalars().all()
+        return sum(amounts) if amounts else 0.0
+
+    async def get_auto_total_by_date(self, user_id: int, date: date) -> float:
+        """Получить общее количество автоматического инсулина за дату (из расчетов УК)"""
+        result = await self.session.execute(
+            select(InsulinRecord.amount).where(
+                and_(InsulinRecord.user_id == user_id, InsulinRecord.date == date, InsulinRecord.is_manual == 0)
+            )
         )
         amounts = result.scalars().all()
         return sum(amounts) if amounts else 0.0

@@ -63,13 +63,16 @@ class InsulinRecord(Base):
     date = Column(Date, nullable=False, index=True)
     insulin_type = Column(Enum(InsulinType), nullable=False)
     amount = Column(Float, nullable=False)  # Количество инсулина в единицах
+    is_manual = Column(
+        Integer, nullable=False, default=0
+    )  # 0 = автоматически из ввода УК, 1 = ручной ввод пользователя
     created_at = Column(DateTime, default=func.now())
 
     # Связи
     user = relationship("User", back_populates="insulin_records")
 
     def __repr__(self):
-        return f"<InsulinRecord(user_id={self.user_id}, date={self.date}, type={self.insulin_type}, amount={self.amount})>"
+        return f"<InsulinRecord(user_id={self.user_id}, date={self.date}, type={self.insulin_type}, amount={self.amount}, is_manual={self.is_manual})>"
 
 
 class MealRecord(Base):

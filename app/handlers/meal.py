@@ -499,6 +499,23 @@ async def process_glucose_end(message: Message, state: FSMContext, user):
                         dose_corrected=inj["corrected_dose"],
                     )
 
+            # Создаем запись инсулина ТОЛЬКО для этого приема пищи (не сумму за весь день!)
+            from db.repository import InsulinRecordRepository
+            from db.models import InsulinType
+
+            insulin_repo = InsulinRecordRepository(session)
+
+            # Инсулин только этого приема пищи
+            current_meal_insulin = data["insulin_food"] + data.get("insulin_additional", 0)
+
+            await insulin_repo.create(
+                user_id=user.id,
+                date=date.today(),
+                insulin_type=InsulinType.FOOD,
+                amount=current_meal_insulin,
+                is_manual=True,  # Автоматическая запись из расчета УК
+            )
+
         # Формируем дополнительные блоки отчёта
         pause_time = data.get("pause_time")
         pause_line = f"\n• Пауза перед едой: {pause_time} мин." if pause_time is not None else ""
