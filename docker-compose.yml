@@ -10,13 +10,19 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U diabet_user -d diabet_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   bot:
     build: .
     container_name: diabet_bot
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
       - POSTGRES_HOST=postgres
@@ -26,6 +32,13 @@ services:
       - POSTGRES_DB=diabet_bot
       - DEBUG=False
     restart: unless-stopped
+    command: >
+      sh -c "
+        echo 'Running migrations...' &&
+        alembic upgrade head &&
+        echo 'Starting bot...' &&
+        python main.py
+      "
 
 volumes:
   postgres_data:
