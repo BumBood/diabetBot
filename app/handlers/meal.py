@@ -513,7 +513,7 @@ async def process_glucose_end(message: Message, state: FSMContext, user):
                 date=date.today(),
                 insulin_type=InsulinType.FOOD,
                 amount=current_meal_insulin,
-                is_manual=True,  # Автоматическая запись из расчета УК
+                is_manual=False,  # Автоматическая запись из расчета УК
             )
 
         # Формируем дополнительные блоки отчёта
