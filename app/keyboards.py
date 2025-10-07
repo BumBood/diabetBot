@@ -159,3 +159,14 @@ def get_fci_edit_keyboard() -> InlineKeyboardMarkup:
         ]
     )
     return keyboard
+
+
+def get_fci_confirmation_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для подтверждения ФЧИ перед расчетом УК"""
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Изменить ФЧИ за день", callback_data="uk_edit_fci")],
+            [InlineKeyboardButton(text="✅ Завершить расчет", callback_data="uk_finish_calculation")],
+        ]
+    )
+    return keyboard

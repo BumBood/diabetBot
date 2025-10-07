@@ -23,6 +23,9 @@ class MealStates(StatesGroup):
     waiting_for_glucose_end = State()
     waiting_for_additional_injections = State()
     waiting_for_additional_carbs = State()
+    waiting_for_fci_confirmation = State()
+    waiting_for_fci_edit_date = State()
+    waiting_for_fci_edit_amount = State()
 
 
 class StatisticsStates(StatesGroup):

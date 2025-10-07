@@ -11,6 +11,7 @@ from app.keyboards import (
     get_main_menu_keyboard,
     get_cancel_keyboard,
     get_skip_proteins_keyboard,
+    get_fci_confirmation_keyboard,
 )
 from app.utils import (
     parse_glucose_input,
@@ -18,6 +19,9 @@ from app.utils import (
     calculate_uk,
     calculate_injection_correction,
     get_meal_type_name,
+    get_date_suggestions,
+    format_date,
+    get_insulin_for_fci,
 )
 from db.repository import MealRecordRepository, AdditionalInjectionRepository, FCIRepository
 from db.session import async_session
@@ -431,7 +435,7 @@ async def finish_injections(callback: CallbackQuery, state: FSMContext):
 
 @router.message(MealStates.waiting_for_glucose_end)
 async def process_glucose_end(message: Message, state: FSMContext, user):
-    """Обработка ввода СК_отработка и финальный расчёт УК"""
+    """Обработка ввода СК_отработка и показ ФЧИ за 3 дня для подтверждения"""
     try:
         glucose_end = parse_glucose_input(message.text or "")
         if glucose_end < 1 or glucose_end > 30:
@@ -441,7 +445,8 @@ async def process_glucose_end(message: Message, state: FSMContext, user):
             )
             return
 
-        data = await state.get_data()
+        # Сохраняем glucose_end в state
+        await state.update_data(glucose_end=glucose_end)
 
         # Получаем ФЧИ из базы данных
         async with async_session() as session:
@@ -458,84 +463,126 @@ async def process_glucose_end(message: Message, state: FSMContext, user):
 
             fci_value = float(latest_fci.value)
 
-            # Рассчитываем УК
-            uk_value = calculate_uk(
-                glucose_start=data["glucose_start"],
-                glucose_end=glucose_end,
-                fci=fci_value,
-                insulin_food=data["insulin_food"],
-                insulin_additional=data.get("insulin_additional", 0),
-                carbs_main=data["carbs_main"],
-                carbs_additional=data.get("carbs_additional", 0),
-                proteins=data.get("proteins"),
-                fats=data.get("fats"),
-            )
+            # Получаем данные за последние 3 дня для расчета ФЧИ
+            day1, day2, day3 = get_date_suggestions()
+            day1_total = await get_insulin_for_fci(user.id, day1, session)
+            day2_total = await get_insulin_for_fci(user.id, day2, session)
+            day3_total = await get_insulin_for_fci(user.id, day3, session)
 
-            # Сохраняем запись о приёме пищи
-            meal_repo = MealRecordRepository(session)
-            meal_record = await meal_repo.create(
-                user_id=user.id,
-                date=date.today(),
-                meal_type=data["meal_type"],
-                glucose_start=data["glucose_start"],
-                pause_time=data.get("pause_time"),
-                carbs_main=data["carbs_main"],
-                carbs_additional=data.get("carbs_additional", 0),
-                proteins=data.get("proteins"),
-                insulin_food=data["insulin_food"],
-                glucose_end=glucose_end,
-                insulin_additional=data.get("insulin_additional", 0),
-                uk_value=uk_value,
-            )
+        # Сохраняем ФЧИ в state для дальнейшего использования
+        await state.update_data(fci_value=fci_value)
+        await state.set_state(MealStates.waiting_for_fci_confirmation)
 
-            # Сохраняем подколки
-            if data.get("additional_injections"):
-                injection_repo = AdditionalInjectionRepository(session)
-                for inj in data["additional_injections"]:
-                    await injection_repo.create(
-                        meal_record_id=int(meal_record.id),
-                        time_from_meal=inj["time"],
-                        dose=inj["dose"],
-                        dose_corrected=inj["corrected_dose"],
-                    )
+        # Формируем текст с данными ФЧИ за 3 дня
+        fci_review_text = f"""
+✅ СК_отработка: {glucose_end} ммоль/л
 
-            # Создаем запись инсулина ТОЛЬКО для этого приема пищи (не сумму за весь день!)
-            from db.repository import InsulinRecordRepository
-            from db.models import InsulinType
+📊 <b>Проверьте данные ФЧИ за последние 3 дня:</b>
 
-            insulin_repo = InsulinRecordRepository(session)
+• <b>{format_date(day1)}</b> (вчера): {day1_total:.1f} ед.
+• <b>{format_date(day2)}</b> (позавчера): {day2_total:.1f} ед.
+• <b>{format_date(day3)}</b> (позапозавчера): {day3_total:.1f} ед.
 
-            # Инсулин только этого приема пищи
-            current_meal_insulin = data["insulin_food"] + data.get("insulin_additional", 0)
+📈 <b>Текущий ФЧИ:</b> {fci_value:.2f}
 
-            await insulin_repo.create(
-                user_id=user.id,
-                date=date.today(),
-                insulin_type=InsulinType.FOOD,
-                amount=current_meal_insulin,
-                is_manual=False,  # Автоматическая запись из расчета УК
-            )
+⚠️ Если данные за какой-то день неверны, вы можете их изменить.
+Иначе нажмите "✅ Завершить расчет" для завершения расчета УК.
+        """
 
-        # Формируем дополнительные блоки отчёта
-        pause_time = data.get("pause_time")
-        pause_line = f"\n• Пауза перед едой: {pause_time} мин." if pause_time is not None else ""
+        await message.answer(fci_review_text, parse_mode="HTML", reply_markup=get_fci_confirmation_keyboard())
 
-        injections = data.get("additional_injections") or []
-        if injections:
-            injections_lines = ["\n💉 <b>Подколки:</b>"]
-            for idx, inj in enumerate(injections, start=1):
-                tmin = int(inj.get("time", 0))
-                dose = float(inj.get("dose", 0))
-                dose_corr = float(inj.get("corrected_dose", 0))
-                injections_lines.append(
-                    f"• #{idx}: через {tmin // 60} ч (≈ {tmin} мин) — {dose} ед. → {dose_corr:.2f} ед."
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат уровня глюкозы. Введите число (например: 6.8):", reply_markup=get_cancel_keyboard()
+        )
+
+
+@router.callback_query(F.data == "uk_finish_calculation")
+async def finish_uk_calculation(callback: CallbackQuery, state: FSMContext, user):
+    """Финальный расчёт УК после подтверждения ФЧИ"""
+    data = await state.get_data()
+    glucose_end = data["glucose_end"]
+    fci_value = data["fci_value"]
+
+    async with async_session() as session:
+        # Рассчитываем УК
+        uk_value = calculate_uk(
+            glucose_start=data["glucose_start"],
+            glucose_end=glucose_end,
+            fci=fci_value,
+            insulin_food=data["insulin_food"],
+            insulin_additional=data.get("insulin_additional", 0),
+            carbs_main=data["carbs_main"],
+            carbs_additional=data.get("carbs_additional", 0),
+            proteins=data.get("proteins"),
+            fats=data.get("fats"),
+        )
+
+        # Сохраняем запись о приёме пищи
+        meal_repo = MealRecordRepository(session)
+        meal_record = await meal_repo.create(
+            user_id=user.id,
+            date=date.today(),
+            meal_type=data["meal_type"],
+            glucose_start=data["glucose_start"],
+            pause_time=data.get("pause_time"),
+            carbs_main=data["carbs_main"],
+            carbs_additional=data.get("carbs_additional", 0),
+            proteins=data.get("proteins"),
+            insulin_food=data["insulin_food"],
+            glucose_end=glucose_end,
+            insulin_additional=data.get("insulin_additional", 0),
+            uk_value=uk_value,
+        )
+
+        # Сохраняем подколки
+        if data.get("additional_injections"):
+            injection_repo = AdditionalInjectionRepository(session)
+            for inj in data["additional_injections"]:
+                await injection_repo.create(
+                    meal_record_id=int(meal_record.id),
+                    time_from_meal=inj["time"],
+                    dose=inj["dose"],
+                    dose_corrected=inj["corrected_dose"],
                 )
-            injections_block = "\n".join(injections_lines)
-        else:
-            injections_block = ""
 
-        # Формируем результат
-        result_text = f"""
+        # Создаем запись инсулина ТОЛЬКО для этого приема пищи (не сумму за весь день!)
+        from db.repository import InsulinRecordRepository
+        from db.models import InsulinType
+
+        insulin_repo = InsulinRecordRepository(session)
+
+        # Инсулин только этого приема пищи
+        current_meal_insulin = data["insulin_food"] + data.get("insulin_additional", 0)
+
+        await insulin_repo.create(
+            user_id=user.id,
+            date=date.today(),
+            insulin_type=InsulinType.FOOD,
+            amount=current_meal_insulin,
+            is_manual=False,  # Автоматическая запись из расчета УК
+        )
+
+    # Формируем дополнительные блоки отчёта
+    pause_time = data.get("pause_time")
+    pause_line = f"\n• Пауза перед едой: {pause_time} мин." if pause_time is not None else ""
+
+    injections = data.get("additional_injections") or []
+    if injections:
+        injections_lines = ["\n💉 <b>Подколки:</b>"]
+        for idx, inj in enumerate(injections, start=1):
+            tmin = int(inj.get("time", 0))
+            dose = float(inj.get("dose", 0))
+            dose_corr = float(inj.get("corrected_dose", 0))
+            injections_lines.append(
+                f"• #{idx}: через {tmin // 60} ч (≈ {tmin} мин) — {dose} ед. → {dose_corr:.2f} ед."
+            )
+        injections_block = "\n".join(injections_lines)
+    else:
+        injections_block = ""
+
+    # Формируем результат
+    result_text = f"""
 🎉 <b>Расчёт УК завершён!</b>
 
 📊 <b>Данные:</b>
@@ -554,12 +601,138 @@ async def process_glucose_end(message: Message, state: FSMContext, user):
 • <b>УК = {uk_value:.3f}</b>
 
 Данные сохранены! Теперь вы можете использовать этот УК для планирования следующих приёмов пищи.
+    """
+
+    await state.clear()
+
+    # Отправляем результат пользователю
+    if callback.message and hasattr(callback.message, "answer"):
+        await callback.message.answer(result_text, parse_mode="HTML", reply_markup=get_main_menu_keyboard())
+    elif callback.bot:
+        await callback.bot.send_message(
+            chat_id=callback.from_user.id, text=result_text, parse_mode="HTML", reply_markup=get_main_menu_keyboard()
+        )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data == "uk_edit_fci")
+async def start_fci_edit_in_meal(callback: CallbackQuery, state: FSMContext):
+    """Начало изменения данных инсулина для пересчета ФЧИ во время расчета УК"""
+    await state.set_state(MealStates.waiting_for_fci_edit_date)
+
+    text = """
+✏️ <b>Изменение данных инсулина для расчета ФЧИ</b>
+
+Введите дату, за которую хотите изменить количество инсулина, в формате ДД.ММ.ГГГГ (например: 03.10.2024):
+    """
+
+    await _safe_edit_or_answer(callback, text, parse_mode="HTML", reply_markup=get_cancel_keyboard())
+
+
+@router.message(MealStates.waiting_for_fci_edit_date)
+async def process_fci_edit_date_in_meal(message: Message, state: FSMContext, user):
+    """Обработка ввода даты для изменения данных инсулина во время расчета УК"""
+    try:
+        from datetime import datetime
+
+        # Парсим дату
+        date_str = (message.text or "").strip()
+        date_obj = datetime.strptime(date_str, "%d.%m.%Y").date()
+
+        # Получаем текущее значение инсулина за эту дату
+        async with async_session() as session:
+            current_insulin = await get_insulin_for_fci(user.id, date_obj, session)
+
+        await state.update_data(edit_fci_date=date_obj, current_fci_insulin=current_insulin)
+        await state.set_state(MealStates.waiting_for_fci_edit_amount)
+
+        text = f"""
+✅ Дата: {format_date(date_obj)}
+💉 Текущее количество инсулина: <b>{current_insulin:.1f} ед.</b>
+
+Введите новое количество ультракороткого инсулина за этот день:
         """
 
-        await state.clear()
-        await message.answer(result_text, parse_mode="HTML", reply_markup=get_main_menu_keyboard())
+        await message.answer(text, reply_markup=get_cancel_keyboard(), parse_mode="HTML")
 
     except ValueError:
         await message.answer(
-            "❌ Неверный формат уровня глюкозы. Введите число (например: 6.8):", reply_markup=get_cancel_keyboard()
+            "❌ Неверный формат даты. Введите дату в формате ДД.ММ.ГГГГ (например: 03.10.2024):",
+            reply_markup=get_cancel_keyboard(),
+        )
+
+
+@router.message(MealStates.waiting_for_fci_edit_amount)
+async def process_fci_edit_amount_in_meal(message: Message, state: FSMContext, user):
+    """Обработка ввода нового количества инсулина и возврат к подтверждению ФЧИ"""
+    try:
+        new_insulin = parse_number_input(message.text or "")
+        if new_insulin < 0:
+            await message.answer(
+                "❌ Количество инсулина не может быть отрицательным. Попробуйте ещё раз:",
+                reply_markup=get_cancel_keyboard(),
+            )
+            return
+
+        data = await state.get_data()
+        edit_fci_date = data["edit_fci_date"]
+        current_fci_insulin = data["current_fci_insulin"]
+
+        # Сохраняем новые данные инсулина как ручную запись
+        async with async_session() as session:
+            from db.repository import InsulinRecordRepository
+            from db.models import InsulinType
+
+            insulin_repo = InsulinRecordRepository(session)
+            await insulin_repo.update_or_create_manual(
+                user_id=user.id, target_date=edit_fci_date, insulin_type=InsulinType.FOOD, amount=new_insulin
+            )
+
+            # Пересчитываем ФЧИ
+            from app.utils import calculate_fci
+
+            day1, day2, day3 = get_date_suggestions()
+            day1_total = await get_insulin_for_fci(user.id, day1, session)
+            day2_total = await get_insulin_for_fci(user.id, day2, session)
+            day3_total = await get_insulin_for_fci(user.id, day3, session)
+
+            # Если есть данные за все 3 дня, пересчитываем ФЧИ
+            if day1_total > 0 and day2_total > 0 and day3_total > 0:
+                fci_value = calculate_fci(day1_total, day2_total, day3_total)
+                fci_repo = FCIRepository(session)
+                await fci_repo.update_or_create(user_id=user.id, date=day1, value=fci_value)
+
+                # Обновляем ФЧИ в state
+                await state.update_data(fci_value=fci_value)
+            else:
+                fci_value = data.get("fci_value", 0)
+
+        # Возвращаем пользователя к экрану подтверждения ФЧИ
+        await state.set_state(MealStates.waiting_for_fci_confirmation)
+
+        text = f"""
+✅ <b>Данные инсулина изменены!</b>
+
+📅 Дата: {format_date(edit_fci_date)}
+💉 Старое значение: {current_fci_insulin:.1f} ед.
+💉 Новое значение: <b>{new_insulin:.1f} ед.</b>
+
+📊 <b>Обновленные данные ФЧИ за последние 3 дня:</b>
+
+• <b>{format_date(day1)}</b> (вчера): {day1_total:.1f} ед.
+• <b>{format_date(day2)}</b> (позавчера): {day2_total:.1f} ед.
+• <b>{format_date(day3)}</b> (позапозавчера): {day3_total:.1f} ед.
+
+📈 <b>Обновленный ФЧИ:</b> {fci_value:.2f}
+
+⚠️ Проверьте данные. Если все верно, нажмите "✅ Завершить расчет".
+        """
+
+        await message.answer(text, parse_mode="HTML", reply_markup=get_fci_confirmation_keyboard())
+
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат числа. Введите количество инсулина числом (например: 12.0):",
+            reply_markup=get_cancel_keyboard(),
         )
