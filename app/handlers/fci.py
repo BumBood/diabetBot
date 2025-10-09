@@ -275,7 +275,7 @@ async def process_day3_input(message: Message, state: FSMContext, user):
 
             # Рассчитываем и сохраняем ФЧИ
             fci_value = calculate_fci(day1_value, day2_value, day3_value)
-            await fci_repo.update_or_create(user_id=user.id, date=data["day3_date"], value=fci_value)
+            await fci_repo.update_or_create(user_id=user.id, date=data["day1_date"], value=fci_value)
 
         result_text = f"""
 🎉 <b>Расчёт ФЧИ завершён!</b>

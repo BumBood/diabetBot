@@ -344,7 +344,11 @@ async def process_insulin_food(message: Message, state: FSMContext, user):
 @router.callback_query(F.data == "add_injection")
 async def add_additional_injection(callback: CallbackQuery, state: FSMContext):
     """Добавление дополнительной подколки"""
-    await state.update_data(additional_injections=[])
+    # Инициализируем список подколок только если его еще нет
+    data = await state.get_data()
+    if "additional_injections" not in data:
+        await state.update_data(additional_injections=[])
+
     await state.set_state(MealStates.waiting_for_additional_injections)
 
     text = """
